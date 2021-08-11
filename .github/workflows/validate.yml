@@ -169,17 +169,14 @@ jobs:
       env:
         GOARCH: ${{ matrix.arch }}
       run: make release
-    - name: install deps
-      run: |
-        ls -llah release/*
     - name: upload artifacts
       uses: actions/upload-artifact@v2
       with:
         name: release-${{ github.run_id }}
-        path: release/*
+        path: release
 
   release:
-    name: Create containerd Release
+    name: Create Runc Release
     runs-on: ubuntu-20.04
     timeout-minutes: 10
     needs: [build-release]
@@ -189,7 +186,7 @@ jobs:
       - name: Download builds and release notes
         uses: actions/download-artifact@v2
         with:
-          path: release/*
+          path: release
           name: release-${{ github.run_id }}
       - name: Create Release
         id: create_release
@@ -213,16 +210,15 @@ jobs:
       - name: DL build artifact
         uses: actions/download-artifact@v2
         with:
-          path: release/*
+          path: release
           name: release-${{ github.run_id }}
       - name: Catalog build assets for upload
         id: catalog
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          ls -l . || true
-          ls / || true
-          find release || true
+          find release
+          mkdir -p manager
           PREFIX=("release/${{ matrix.arch }}")
           ARTIFACT=()
           for f in `find ${PREFIX}  -mindepth 1 -maxdepth 1 -printf '%f\n'`; do
@@ -233,8 +229,8 @@ jobs:
              --arg PREFIX $PREFIX \
              '{
                 "artifact": [$ARTIFACT],
-             } | {artifacts: [.artifact[] | {name: .,prefix: $PREFIX}]}' > manager/artifacts.${{ matrix.arch }}.json || true
-
+             } | {artifacts: [.artifact[] | {name: .,prefix: $PREFIX}]}' > manager/artifacts.${{ matrix.arch }}.json
+          cat manager/artifacts.${{ matrix.arch }}.json
       - name: upload artifacts
         uses: actions/upload-artifact@v2
         with:

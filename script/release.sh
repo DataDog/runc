@@ -31,11 +31,11 @@ function build_project() {
 	# so download, install and build against it.
 
 	local libseccomp_ver='2.5.1'
-	local tarball="libseccomp-${libseccomp_ver}.tar.gz"
 	local prefix
 	local arch=x86_64
 	local strip=${STRIP:-strip}
 	[[ ${goarch} == "arm64" ]] && arch=${CC%%-*}
+	local tarball="libseccomp-${libseccomp_ver}.tar.gz"
 	prefix="$(mktemp -d)"
 	wget "https://github.com/seccomp/libseccomp/releases/download/v${libseccomp_ver}/${tarball}"{,.asc}
 	tar xf "$tarball"
@@ -122,9 +122,13 @@ while getopts "S:c:r:v:h:" opt; do
 done
 
 version="${version:-$(<"$root/VERSION")}"
+releasedir="${releasedir:-release/$version}"
 hashcmd="${hashcmd:-sha256sum}"
 goarch="$(go env GOARCH || echo "amd64")"
-releasedir="${releasedir:-release/$goarch}"
+CI=${CI:-false}
+if [[ ${CI} = true ]]; then
+	releasedir="release/$goarch"
+fi
 
 log "creating $project release in '$releasedir'"
 log "  version: $version"
@@ -142,12 +146,12 @@ rm -rf "$releasedir" && mkdir -p "$releasedir"
 build_project "$releasedir/$project.$goarch"
 
 # Generate new archive.
-git archive --format=tar --prefix="$project-$version/" "$commit" | xz >"$releasedir/$project.tar.xz"
+git archive --format=tar --prefix="$project-$version/" "$commit" | xz >"$releasedir/$project.$goarch.tar.xz"
 
 # Generate sha256 checksums for both.
 (
 	cd "$releasedir"
-	"$hashcmd" "$project".{"$goarch",tar.xz} >"$project.$goarch.$hashcmd"
+	"$hashcmd" "$project.$goarch"{,.tar.xz} >"$project.$goarch.$hashcmd"
 )
 
 # Set up the gpgflags.
