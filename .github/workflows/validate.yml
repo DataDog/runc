@@ -6,6 +6,7 @@ on:
     branches:
       - master
       - release-*
+      - bob/*
   pull_request:
 
 jobs:
@@ -142,8 +143,11 @@ jobs:
         git diff --exit-code
 
 
-  release:
+  build-release:
     runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
     steps:
     - name: checkout
       uses: actions/checkout@v2
@@ -153,10 +157,165 @@ jobs:
       run: |
         sudo apt -qq update
         sudo apt -qq install gperf
+
+    - name: install arm deps
+      if: matrix.arch == 'arm64'
+      run: |
+        sudo apt install gcc-aarch64-linux-gnu
+        echo CC=aarch64-linux-gnu-gcc >> $GITHUB_ENV
+        echo CC_FOR_TARGET=aarch64-linux-gnu-gcc >> $GITHUB_ENV
+        echo STRIP=aarch64-linux-gnu-strip >> $GITHUB_ENV
     - name: make release
+      env:
+        GOARCH: ${{ matrix.arch }}
       run: make release
+    - name: install deps
+      run: |
+        ls -llah release/*
     - name: upload artifacts
       uses: actions/upload-artifact@v2
       with:
         name: release-${{ github.run_id }}
         path: release/*
+
+  release:
+    name: Create containerd Release
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    needs: [build-release]
+    outputs:
+       upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Download builds and release notes
+        uses: actions/download-artifact@v2
+        with:
+          path: release/*
+          name: release-${{ github.run_id }}
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1.1.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Runc ${{ needs.check.outputs.stringver }}
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+  artifact-discovery:
+    name: Discover the release artifact
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    needs: [release]
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: DL build artifact
+        uses: actions/download-artifact@v2
+        with:
+          path: release/*
+          name: release-${{ github.run_id }}
+      - name: Catalog build assets for upload
+        id: catalog
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          ls -l . || true
+          ls / || true
+          find release || true
+          PREFIX=("release/${{ matrix.arch }}")
+          ARTIFACT=()
+          for f in `find ${PREFIX}  -mindepth 1 -maxdepth 1 -printf '%f\n'`; do
+            ARTIFACT+=($f)
+          done
+          jq --null-input -rc \
+             --arg ARTIFACT $ARTIFACT \
+             --arg PREFIX $PREFIX \
+             '{
+                "artifact": [$ARTIFACT],
+             } | {artifacts: [.artifact[] | {name: .,prefix: $PREFIX}]}' > manager/artifacts.${{ matrix.arch }}.json || true
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: manager-${{ github.run_id }}
+          path: manager/*
+  release-upload:
+    name: Upload containerd tarballs
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    needs: [release]
+
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+     - name: Download builds and release notes
+       uses: actions/download-artifact@v2
+       with:
+         path: builds
+     - name: Catalog build assets for upload
+       id: catalog
+       env:
+         ARCH: ${{ matrix.arch }}
+       run: |
+         _filenum=1
+         for f in `ls "release/"`; do
+           echo "::set-output name=file${_filenum}::${f}"
+           let "_filenum+=1"
+         done
+     - name: Upload containerd tarball
+       uses: actions/upload-release-asset@v1
+       env:
+         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+       with:
+         upload_url: ${{ needs.release.outputs.upload_url }}
+         asset_path: ./release/${{ matrix.arch }}/${{ steps.catalog.outputs.file1 }}
+         asset_name: ${{ steps.catalog.outputs.file1 }}
+         asset_content_type: application/gzip
+
+#      - name: Upload sha256 sum
+#        uses: actions/upload-release-asset@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          upload_url: ${{ needs.release.outputs.upload_url }}
+#          asset_path: ./builds/containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}/${{ steps.catalog.outputs.file2 }}
+#          asset_name: ${{ steps.catalog.outputs.file2 }}
+#          asset_content_type: text/plain
+#      - name: Upload cri containerd tarball
+#        uses: actions/upload-release-asset@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          upload_url: ${{ needs.release.outputs.upload_url }}
+#          asset_path: ./builds/cri-containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}/${{ steps.catalog.outputs.file3 }}
+#          asset_name: ${{ steps.catalog.outputs.file3 }}
+#          asset_content_type: application/gzip
+#      - name: Upload cri sha256 sum
+#        uses: actions/upload-release-asset@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          upload_url: ${{ needs.release.outputs.upload_url }}
+#          asset_path: ./builds/cri-containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}/${{ steps.catalog.outputs.file4 }}
+#          asset_name: ${{ steps.catalog.outputs.file4 }}
+#          asset_content_type: text/plain
+#      - name: Upload cri/cni containerd tarball
+#        uses: actions/upload-release-asset@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          upload_url: ${{ needs.release.outputs.upload_url }}
+#          asset_path: ./builds/cri-containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}/${{ steps.catalog.outputs.file5 }}
+#          asset_name: ${{ steps.catalog.outputs.file5 }}
+#          asset_content_type: application/gzip
+#      - name: Upload cri/cni sha256 sum
+#        uses: actions/upload-release-asset@v1
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#        with:
+#          upload_url: ${{ needs.release.outputs.upload_url }}
+#          asset_path: ./builds/cri-containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}/${{ steps.catalog.outputs.file6 }}
+#          asset_name: ${{ steps.catalog.outputs.file6 }}
+#          asset_content_type: text/plain

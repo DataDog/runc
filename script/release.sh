@@ -33,12 +33,15 @@ function build_project() {
 	local libseccomp_ver='2.5.1'
 	local tarball="libseccomp-${libseccomp_ver}.tar.gz"
 	local prefix
+	local arch=x86_64
+	local strip=${STRIP:-strip}
+	[[ ${goarch} == "arm64" ]] && arch=${CC%%-*}
 	prefix="$(mktemp -d)"
 	wget "https://github.com/seccomp/libseccomp/releases/download/v${libseccomp_ver}/${tarball}"{,.asc}
 	tar xf "$tarball"
 	(
 		cd "libseccomp-${libseccomp_ver}"
-		./configure --prefix="$prefix" --enable-static --disable-shared
+		./configure --prefix="$prefix" --enable-static --disable-shared --build=x86_64 --host="${arch}" --target="${arch}"
 		make install
 	)
 	mv "$tarball"{,.asc} "$builddir"
@@ -53,7 +56,7 @@ function build_project() {
 	# it can reuse cached pkg-config results).
 	make -C "$root" PKG_CONFIG_PATH="${prefix}/lib/pkgconfig" COMMIT_NO= EXTRA_FLAGS="-a" EXTRA_LDFLAGS="${ldflags}" static
 	rm -rf "$prefix"
-	strip "$root/$project"
+	${strip} "$root/$project"
 	mv "$root/$project" "$1"
 }
 
@@ -119,9 +122,9 @@ while getopts "S:c:r:v:h:" opt; do
 done
 
 version="${version:-$(<"$root/VERSION")}"
-releasedir="${releasedir:-release/$version}"
 hashcmd="${hashcmd:-sha256sum}"
 goarch="$(go env GOARCH || echo "amd64")"
+releasedir="${releasedir:-release/$goarch}"
 
 log "creating $project release in '$releasedir'"
 log "  version: $version"
@@ -144,7 +147,7 @@ git archive --format=tar --prefix="$project-$version/" "$commit" | xz >"$release
 # Generate sha256 checksums for both.
 (
 	cd "$releasedir"
-	"$hashcmd" "$project".{"$goarch",tar.xz} >"$project.$hashcmd"
+	"$hashcmd" "$project".{"$goarch",tar.xz} >"$project.$goarch.$hashcmd"
 )
 
 # Set up the gpgflags.
