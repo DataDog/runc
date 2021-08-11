@@ -122,9 +122,13 @@ while getopts "S:c:r:v:h:" opt; do
 done
 
 version="${version:-$(<"$root/VERSION")}"
+releasedir="${releasedir:-release/$version}"
 hashcmd="${hashcmd:-sha256sum}"
 goarch="$(go env GOARCH || echo "amd64")"
-releasedir="${releasedir:-release/$goarch}"
+CI=${CI:-false}
+if [[ ${CI} = true ]]; then
+	releasedir="release/$goarch"
+fi
 
 log "creating $project release in '$releasedir'"
 log "  version: $version"
