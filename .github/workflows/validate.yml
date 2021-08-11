@@ -169,14 +169,11 @@ jobs:
       env:
         GOARCH: ${{ matrix.arch }}
       run: make release
-    - name: install deps
-      run: |
-        ls -llah release/*
     - name: upload artifacts
       uses: actions/upload-artifact@v2
       with:
         name: release-${{ github.run_id }}
-        path: release/*
+        path: release
 
   release:
     name: Create containerd Release
@@ -189,7 +186,7 @@ jobs:
       - name: Download builds and release notes
         uses: actions/download-artifact@v2
         with:
-          path: release/*
+          path: release
           name: release-${{ github.run_id }}
       - name: Create Release
         id: create_release
@@ -213,7 +210,7 @@ jobs:
       - name: DL build artifact
         uses: actions/download-artifact@v2
         with:
-          path: release/*
+          path: release
           name: release-${{ github.run_id }}
       - name: Catalog build assets for upload
         id: catalog
