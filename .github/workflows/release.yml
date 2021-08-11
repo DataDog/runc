@@ -1,0 +1,116 @@
+name: release
+on:
+  push:
+    tags:
+      - v*
+jobs:
+  build-release:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: install deps
+      run: |
+        sudo apt -qq update
+        sudo apt -qq install gperf
+
+    - name: install arm deps
+      if: matrix.arch == 'arm64'
+      run: |
+        sudo apt install gcc-aarch64-linux-gnu
+        echo CC=aarch64-linux-gnu-gcc >> $GITHUB_ENV
+        echo CC_FOR_TARGET=aarch64-linux-gnu-gcc >> $GITHUB_ENV
+        echo STRIP=aarch64-linux-gnu-strip >> $GITHUB_ENV
+    - name: make release
+      env:
+        GOARCH: ${{ matrix.arch }}
+      run: make release
+    - name: upload artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: release-${{ github.run_id }}
+        path: release
+
+  release:
+    name: Create Runc Release
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    needs: [build-release]
+    outputs:
+       upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Download builds and release notes
+        uses: actions/download-artifact@v2
+        with:
+          path: release
+          name: release-${{ github.run_id }}
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1.1.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Runc ${{ needs.check.outputs.stringver }}
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+  artifact-discovery:
+    name: Discover the release artifact
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    needs: [release]
+    outputs:
+       matrix: ${{ steps.catalog.outputs.matrix }}
+    steps:
+      - name: DL build artifact
+        uses: actions/download-artifact@v2
+        with:
+          path: release
+          name: release-${{ github.run_id }}
+      - name: Catalog build assets for upload
+        id: catalog
+        run: |
+          find release
+          mkdir -p meta
+          for f in `find release  -mindepth 2 -maxdepth 2 -type f -printf '%f@%p\n'`; do
+            echo ${f%%@*} ${f##*@}
+            mime=$(file -b --mime-type ${f##*@})
+            echo ${mime}
+            jq --null-input -rc --arg NAME ${f%%@*} --arg PATH ${f##*@} --arg MIME ${mime} '{ name: $NAME, path: $PATH, mime: $MIME}' > meta/${f%%@*}.json
+          done
+          jq -rc '{ include:[ inputs ] }' -n meta/*.json > matrix.json
+          echo name=matrix::$(cat matrix.json)
+          echo "::set-output name=matrix::$(cat matrix.json)"
+  release-upload:
+    name: Upload runc tarballs
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    needs: [artifact-discovery,release]
+    strategy:
+      matrix: ${{ fromJSON(needs.artifact-discovery.outputs.matrix) }}
+    steps:
+     - name: Download builds and release notes
+       uses: actions/download-artifact@v2
+       with:
+         path: release
+         name: release-${{ github.run_id }}
+     - name: Catalog build assets for upload
+       id: catalog
+       run: |
+        ls .
+        ls release
+        ls "${{matrix.path}}" || true
+     - name: Upload artifact
+       uses: actions/upload-release-asset@v1
+       env:
+         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+       with:
+         upload_url: ${{ needs.release.outputs.upload_url }}
+         asset_path: ${{ matrix.path }}
+         asset_name: ${{ matrix.name }}
+         asset_content_type: ${{ matrix.mime }}

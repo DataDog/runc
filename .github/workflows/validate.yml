@@ -142,8 +142,11 @@ jobs:
         git diff --exit-code
 
 
-  release:
+  build-release:
     runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
     steps:
     - name: checkout
       uses: actions/checkout@v2
@@ -153,10 +156,20 @@ jobs:
       run: |
         sudo apt -qq update
         sudo apt -qq install gperf
+
+    - name: install arm deps
+      if: matrix.arch == 'arm64'
+      run: |
+        sudo apt install gcc-aarch64-linux-gnu
+        echo CC=aarch64-linux-gnu-gcc >> $GITHUB_ENV
+        echo CC_FOR_TARGET=aarch64-linux-gnu-gcc >> $GITHUB_ENV
+        echo STRIP=aarch64-linux-gnu-strip >> $GITHUB_ENV
     - name: make release
+      env:
+        GOARCH: ${{ matrix.arch }}
       run: make release
     - name: upload artifacts
       uses: actions/upload-artifact@v2
       with:
         name: release-${{ github.run_id }}
-        path: release/*
+        path: release
