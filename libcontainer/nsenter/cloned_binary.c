@@ -489,9 +489,9 @@ static int clone_binary(void)
 	 * Before we resort to copying, let's try creating an ro-binfd in one shot
 	 * by getting a handle for a read-only bind-mount of the execfd.
 	 */
-	execfd = try_bindfd();
-	if (execfd >= 0)
-		return execfd;
+//	execfd = try_bindfd();
+//	if (execfd >= 0)
+//		return execfd;
 
 	/*
 	 * Dammit, that didn't work -- time to copy the binary to a safe place we
